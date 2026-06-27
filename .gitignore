@@ -1,3 +1,6 @@
 # 前後端資料夾各自為專案
 /PlayerLedgerFrontend
 /PlayerLedgerBackend
+
+# .cluade
+.claude/
