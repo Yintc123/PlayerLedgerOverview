@@ -34,13 +34,13 @@ PlayerLedger/
 使用者瀏覽器
   │  Cookie: __Host-sid（HttpOnly / Secure / SameSite）
   ▼
-CloudFront ─▶ API Gateway/ALB ─▶ ┌─────────────────────────┐
-                                 │  前端 BFF（Next.js）      │  ← 架構設計 A
-                                 └───────────┬─────────────┘
-                                Bearer JWT（由 BFF 注入）
-                                             ▼
-                  API Gateway/ALB ─▶ ┌─────────────────────────┐
-                                     │  後端 API（Gin）          │  ← 架構設計 B
+CloudFront ─▶ ALB ─▶ ┌─────────────────────────┐
+                     │  前端 BFF（Next.js）      │  ← 架構設計 A
+                     └───────────┬─────────────┘
+                    Bearer JWT（由 BFF 注入）
+                                 ▼
+            ALB ─▶ ┌─────────────────────────┐
+                   │  後端 API（Gin）          │  ← 架構設計 B
                                      └───────────┬─────────────┘
                                      ┌───────────┴───────────┐
                                      ▼                       ▼
@@ -85,7 +85,7 @@ src/
 | **安全標頭** | HSTS / CSP（nonce via proxy header）/ X-Frame-Options / COOP / CORP 等 |
 | **渲染策略** | Server-first（RSC + SSR）避免 waterfall；UI 可見欄位由後端資料驅動（PII 遮罩在後端執行）|
 | **可觀測性** | pino（自動 redact token/password/PII）→ CloudWatch；EMF metrics；OTel + X-Ray；前端 telemetry 端點 `/api/client-errors`、`/api/vitals`、`/api/csp-report` |
-| **部署** | 多階段 Dockerfile（standalone、非 root UID 1001、tini）→ CloudFront → API Gateway/ALB → ECS Fargate |
+| **部署** | 多階段 Dockerfile（standalone、非 root UID 1001、tini）→ CloudFront → ALB → ECS Fargate |
 
 > 完整 ADR 共 22 篇，涵蓋 BFF route 結構、session API、token mutex、header forwarding、CSRF、health probe 等決策。
 
