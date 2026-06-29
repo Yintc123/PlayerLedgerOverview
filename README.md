@@ -8,13 +8,13 @@
 PlayerLedger/
 ├── PlayerLedgerFrontend/   # Next.js 16 BFF + CMS 介面（ECS Fargate）
 ├── PlayerLedgerBackend/    # Go (Gin) API Server（PostgreSQL + Redis）
-└── infra/                  # 基礎設施
+└── infra/                  # 資料層基礎設施（EC2 上的 PostgreSQL + Redis docker-compose）
 ```
 
 | 子專案 | 技術 | 角色 | 文件 |
 |--------|------|------|------|
 | **Frontend** | Next.js 16 · App Router · Tailwind v4 · shadcn/ui | BFF + CMS UI | [README](https://github.com/Yintc123/PlayerLedgerFrontend) · [specs](https://github.com/Yintc123/PlayerLedgerFrontend/tree/main/docs/specs) · [adr](https://github.com/Yintc123/PlayerLedgerFrontend/tree/main/docs/adr) |
-| **Backend** | Go 1.25 · Gin · GORM · PostgreSQL 15 · Redis 7 | REST API | [README](https://github.com/Yintc123/PlayerLedgerBackend) · [specs](https://github.com/Yintc123/PlayerLedgerBackend/tree/main/docs/specs) · [adr](https://github.com/Yintc123/PlayerLedgerBackend/tree/main/docs/adr) |
+| **Backend** | Go 1.25 · Gin · GORM · PostgreSQL 16 · Redis 7 | REST API | [README](https://github.com/Yintc123/PlayerLedgerBackend) · [specs](https://github.com/Yintc123/PlayerLedgerBackend/tree/main/docs/specs) · [adr](https://github.com/Yintc123/PlayerLedgerBackend/tree/main/docs/adr) |
 
 ---
 
@@ -34,15 +34,16 @@ PlayerLedger/
 使用者瀏覽器
   │  Cookie: __Host-sid（HttpOnly / Secure / SameSite）
   ▼
-CloudFront ──▶ ALB ──▶ 前端 BFF（Next.js / ECS Fargate）      ← 架構設計 A
+CloudFront ──▶ ALB ──▶ 前端 BFF（Next.js / ECS Fargate）        ← 架構設計 A
                           │
-                          │  Bearer JWT（由 BFF 注入）
+                          │  Bearer JWT（VPC 內部呼叫，後端無公網入口）
                           ▼
-        Kubernetes Ingress ──▶ 後端 API（Gin / K8s Pod）       ← 架構設計 B
+            後端 API（Gin / ECS Fargate · internal-only）        ← 架構設計 B
                           │
               ┌───────────┴───────────┐
               ▼                       ▼
-        RDS PostgreSQL          ElastiCache Redis
+         PostgreSQL 16            Redis 7
+       （EC2 自建於 VPC 私網，前後端共用）
 ```
 
 ---
@@ -93,7 +94,7 @@ src/
 
 > 📖 子專案文件：[PlayerLedgerBackend/README.md](https://github.com/Yintc123/PlayerLedgerBackend)
 
-定位為**無狀態 REST API**：JWT（HS256）驗證，所有 session/token/限流狀態存 Redis，部署於 Kubernetes（經 Ingress 入口），支援多副本水平擴展與 graceful shutdown。
+定位為**無狀態 REST API**：JWT（HS256）驗證，所有 session/token/限流狀態存 Redis，以 ECS Fargate 部署且**僅限 VPC 內部存取（無公網入口）**，支援多副本水平擴展與 graceful shutdown。
 
 ### 分層（依賴單向，無循環）
 
@@ -121,7 +122,7 @@ pkg/   # 可重用基礎建設：jwt、redis（Lua script）、ratelimit、audit
 | **稽核** | app log 與 audit log 分離；所有安全事件（登入、token 換發、session 撤銷、admin 操作）寫獨立 sink，best-effort 不阻塞主流程 |
 | **無狀態 / 高可用** | session/token/限流計數存 Redis；graceful shutdown（SIGTERM → 排空 → 依序關閉 HTTP/DB/Redis/logger）|
 | **可觀測性** | Zap 結構化 JSON；Prometheus `/metrics`；X-Ray tracing；`/health`(liveness) 與 `/health/ready`(readiness) 解耦 |
-| **部署** | distroless 多階段映像（非 root UID 65532、CGO 關閉靜態編譯）→ Kubernetes（Ingress）+ RDS PostgreSQL + ElastiCache Redis |
+| **部署** | distroless 多階段映像（非 root UID 65532、CGO 關閉靜態編譯，~20MB）→ ECR → ECS Fargate（internal-only，awsvpc）；資料層 PostgreSQL 16 + Redis 7 自建於 EC2（VPC 私網，與前端共用）|
 
 ### 資料模型
 
@@ -146,7 +147,7 @@ Base path `/api`，完整契約見 [`schema/openapi.yaml`](https://github.com/Yi
 
 ## 快速開始
 
-需求：Go 1.25+、Node.js、PostgreSQL 15+、Redis 7+。
+需求：Go 1.25+、Node.js、PostgreSQL 16、Redis 7。本機可用 `infra/docker-compose.yml` 起 PostgreSQL + Redis。
 
 ```bash
 # 後端
