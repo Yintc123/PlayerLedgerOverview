@@ -34,17 +34,15 @@ PlayerLedger/
 使用者瀏覽器
   │  Cookie: __Host-sid（HttpOnly / Secure / SameSite）
   ▼
-CloudFront ─▶ ALB ─▶ ┌─────────────────────────┐
-                     │  前端 BFF（Next.js）      │  ← 架構設計 A
-                     └───────────┬─────────────┘
-                    Bearer JWT（由 BFF 注入）
-                                 ▼
-            ALB ─▶ ┌─────────────────────────┐
-                   │  後端 API（Gin）          │  ← 架構設計 B
-                                     └───────────┬─────────────┘
-                                     ┌───────────┴───────────┐
-                                     ▼                       ▼
-                              RDS PostgreSQL          ElastiCache Redis
+CloudFront ──▶ ALB ──▶ 前端 BFF（Next.js / ECS Fargate）      ← 架構設計 A
+                          │
+                          │  Bearer JWT（由 BFF 注入）
+                          ▼
+        Kubernetes Ingress ──▶ 後端 API（Gin / K8s Pod）       ← 架構設計 B
+                          │
+              ┌───────────┴───────────┐
+              ▼                       ▼
+        RDS PostgreSQL          ElastiCache Redis
 ```
 
 ---
@@ -95,7 +93,7 @@ src/
 
 > 📖 子專案文件：[PlayerLedgerBackend/README.md](https://github.com/Yintc123/PlayerLedgerBackend)
 
-定位為**無狀態 REST API**：JWT（HS256）驗證，所有 session/token/限流狀態存 Redis，支援多副本水平擴展與 graceful shutdown。
+定位為**無狀態 REST API**：JWT（HS256）驗證，所有 session/token/限流狀態存 Redis，部署於 Kubernetes（經 Ingress 入口），支援多副本水平擴展與 graceful shutdown。
 
 ### 分層（依賴單向，無循環）
 
@@ -123,7 +121,7 @@ pkg/   # 可重用基礎建設：jwt、redis（Lua script）、ratelimit、audit
 | **稽核** | app log 與 audit log 分離；所有安全事件（登入、token 換發、session 撤銷、admin 操作）寫獨立 sink，best-effort 不阻塞主流程 |
 | **無狀態 / 高可用** | session/token/限流計數存 Redis；graceful shutdown（SIGTERM → 排空 → 依序關閉 HTTP/DB/Redis/logger）|
 | **可觀測性** | Zap 結構化 JSON；Prometheus `/metrics`；X-Ray tracing；`/health`(liveness) 與 `/health/ready`(readiness) 解耦 |
-| **部署** | Dockerfile / Lambda 變體 → ECS / K8s + RDS PostgreSQL + ElastiCache Redis |
+| **部署** | distroless 多階段映像（非 root UID 65532、CGO 關閉靜態編譯）→ Kubernetes（Ingress）+ RDS PostgreSQL + ElastiCache Redis |
 
 ### 資料模型
 
