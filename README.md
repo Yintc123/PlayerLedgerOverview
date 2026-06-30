@@ -13,7 +13,7 @@ PlayerLedger/
 
 | 子專案 | 技術 | 角色 | 文件 |
 |--------|------|------|------|
-| **Frontend** | Next.js 16 · App Router · Tailwind v4 · shadcn/ui | BFF + CMS UI | [README](https://github.com/Yintc123/PlayerLedgerFrontend) · [specs](https://github.com/Yintc123/PlayerLedgerFrontend/tree/main/docs/specs) · [adr](https://github.com/Yintc123/PlayerLedgerFrontend/tree/main/docs/adr) |
+| **Frontend** | Next.js 16 · App Router · Tailwind v4 · Radix UI（shadcn 風格自建元件）| BFF + CMS UI | [README](https://github.com/Yintc123/PlayerLedgerFrontend) · [specs](https://github.com/Yintc123/PlayerLedgerFrontend/tree/main/docs/specs) · [adr](https://github.com/Yintc123/PlayerLedgerFrontend/tree/main/docs/adr) |
 | **Backend** | Go 1.25 · Gin · GORM · PostgreSQL 16 · Redis 7 | REST API | [README](https://github.com/Yintc123/PlayerLedgerBackend) · [specs](https://github.com/Yintc123/PlayerLedgerBackend/tree/main/docs/specs) · [adr](https://github.com/Yintc123/PlayerLedgerBackend/tree/main/docs/adr) |
 
 ---
@@ -77,13 +77,13 @@ src/
 
 | 面向 | 設計 |
 |------|------|
-| **Session 邊界** | sessionId 存 HttpOnly Cookie（`__Host-` prefix / Secure / SameSite=Strict）；token 與使用者狀態存 Redis，TTL = min(8h, abs_exp − now) |
+| **Session 邊界** | sessionId 存 HttpOnly Cookie（HTTPS 下 `__Host-sid` + Secure，HTTP 降級為 `sid`；SameSite=Lax）；token 與使用者狀態存 Redis，TTL = min(8h, abs_exp − now) |
 | **Token Refresh** | `getValidAccessToken()` 內含 Redis mutex + Lua CAS；多請求並行時只有一個觸發後端 refresh，其餘 bounded polling 等待（100ms × 9s）|
 | **CSRF 防護** | `proxy.ts` 在路由層攔截 POST/PATCH/DELETE，驗證 Origin 白名單；SameSite cookie 為第二道防線 |
-| **限流** | 登入採帳號層 lockout（5 次失敗鎖 15 分，fail-closed）；其餘採 IP 層（fail-open）|
+| **限流** | `proxy.ts` 以 Redis 滑動窗（60s）限流：login 10/IP、register 5/IP（高價值寫入 fail-closed → 503）；已登入者 100/userId、匿名 100/IP（fail-open）；logout 不限流 |
 | **安全標頭** | HSTS / CSP（nonce via proxy header）/ X-Frame-Options / COOP / CORP 等 |
 | **渲染策略** | Server-first（RSC + SSR）避免 waterfall；UI 可見欄位由後端資料驅動（PII 遮罩在後端執行）|
-| **可觀測性** | pino（自動 redact token/password/PII）→ CloudWatch；EMF metrics；OTel + X-Ray；前端 telemetry 端點 `/api/client-errors`、`/api/vitals`、`/api/csp-report` |
+| **可觀測性** | pino（自動 redact token/password/PII）→ CloudWatch；EMF metrics；OTel（`@vercel/otel`，OTLP exporter）；前端 telemetry 端點 `/api/client-errors`、`/api/vitals`、`/api/csp-report` |
 | **部署** | 多階段 Dockerfile（standalone、非 root UID 1001、tini）→ CloudFront → ALB → ECS Fargate |
 
 > 完整 ADR 共 22 篇，涵蓋 BFF route 結構、session API、token mutex、header forwarding、CSRF、health probe 等決策。
@@ -121,7 +121,7 @@ pkg/   # 可重用基礎建設：jwt、redis（Lua script）、ratelimit、audit
 | **資料完整性** | 禁止 AutoMigrate，改用 golang-migrate 版本化；金融紀錄不可刪除（DepositRecord 無 deleted_at），狀態轉換嚴格驗證（ADR-001）|
 | **稽核** | app log 與 audit log 分離；所有安全事件（登入、token 換發、session 撤銷、admin 操作）寫獨立 sink，best-effort 不阻塞主流程 |
 | **無狀態 / 高可用** | session/token/限流計數存 Redis；graceful shutdown（SIGTERM → 排空 → 依序關閉 HTTP/DB/Redis/logger）|
-| **可觀測性** | Zap 結構化 JSON；Prometheus `/metrics`；X-Ray tracing；`/health`(liveness) 與 `/health/ready`(readiness) 解耦 |
+| **可觀測性** | Zap 結構化 JSON；Prometheus `/metrics`；`/health`(liveness) 與 `/health/ready`(readiness) 解耦（分散式 tracing 預留 OpenTelemetry，尚未接入）|
 | **部署** | distroless 多階段映像（非 root UID 65532、CGO 關閉靜態編譯，~20MB）→ ECR → ECS Fargate（internal-only，awsvpc）；資料層 PostgreSQL 16 + Redis 7 自建於 EC2（VPC 私網，與前端共用）|
 
 ### 資料模型
